@@ -214,3 +214,57 @@ abstract contract VM90_ReentrancyGuard {
         _;
         _locked = 0;
     }
+}
+
+abstract contract VM90_Pausable {
+    event VM90_Paused(address indexed by);
+    event VM90_Unpaused(address indexed by);
+
+    bool public paused;
+
+    modifier whenNotPaused() {
+        if (paused) revert("VM90_PAUSED");
+        _;
+    }
+
+    function _pause() internal {
+        if (paused) revert("VM90_ALREADY");
+        paused = true;
+        emit VM90_Paused(msg.sender);
+    }
+
+    function _unpause() internal {
+        if (!paused) revert("VM90_ALREADY2");
+        paused = false;
+        emit VM90_Unpaused(msg.sender);
+    }
+}
+
+contract VM90_Access {
+    // Minimal role registry: ADMIN can grant/revoke; other roles are boolean.
+    bytes32 public constant ADMIN_ROLE = keccak256("VM90_ADMIN_ROLE");
+    bytes32 public constant OPERATOR_ROLE = keccak256("VM90_OPERATOR_ROLE");
+    bytes32 public constant GUARDIAN_ROLE = keccak256("VM90_GUARDIAN_ROLE");
+    bytes32 public constant AUDITOR_ROLE = keccak256("VM90_AUDITOR_ROLE");
+
+    mapping(bytes32 => mapping(address => bool)) internal _role;
+
+    event VM90_RoleGranted(bytes32 indexed role, address indexed account, address indexed by);
+    event VM90_RoleRevoked(bytes32 indexed role, address indexed account, address indexed by);
+
+    error VM90_MissingRole(bytes32 role, address who);
+
+    modifier onlyRole(bytes32 r) {
+        if (!_role[r][msg.sender]) revert VM90_MissingRole(r, msg.sender);
+        _;
+    }
+
+    constructor(address admin) {
+        _role[ADMIN_ROLE][admin] = true;
+        emit VM90_RoleGranted(ADMIN_ROLE, admin, msg.sender);
+    }
+
+    function hasRole(bytes32 r, address who) external view returns (bool) {
+        return _role[r][who];
+    }
+
