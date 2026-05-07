@@ -538,3 +538,57 @@ contract VirtualMaximus90 is VM90_TargetRegistry, VM90_Pausable, VM90_Reentrancy
     // ---- job view helpers ----
     function job(bytes32 jobId) external view returns (Job memory j) {
         j = _jobs[jobId];
+    }
+
+    function jobExists(bytes32 jobId) public view returns (bool) {
+        return _jobs[jobId].state != JobState.None;
+    }
+
+    // ---- queueing (creator direct) ----
+    function queueJob(
+        address target,
+        address token,
+        uint96 maxFee,
+        uint64 delaySec,
+        uint64 ttlSec,
+        bytes calldata payload
+    ) external whenNotPaused returns (bytes32 jobId) {
+        _enforceQueueCooldown(msg.sender);
+        jobId = _queue(msg.sender, target, token, maxFee, delaySec, ttlSec, payload);
+    }
+
+    // ---- queueing (with approval) ----
+    function queueJobWithApproval(
+        address creator,
+        address target,
+        address token,
+        uint96 maxFee,
+        uint64 delaySec,
+        uint64 ttlSec,
+        bytes calldata payload,
+        address approver,
+        uint256 approvalIndex,
+        bytes calldata signature
+    ) external whenNotPaused returns (bytes32 jobId) {
+        // approver must be either creator itself or an approved delegate role; we keep it simple:
+        // - if approver is creator: creator signed (EOA or contract via ERC1271)
+        // - if approver has AUDITOR_ROLE: auditor can approve scheduling for creators (mainnet ops pattern)
+        if (approver != creator && !_role[AUDITOR_ROLE][approver]) revert VM90_ApprovalInvalid();
+        _useApproval(approver, approvalIndex);
+
+        bytes32 payloadHash = keccak256(payload);
+        uint32 nonce = creatorNonce[creator];
+        bytes32 structHash = keccak256(
+            abi.encode(_JOB_TYPEHASH, creator, target, token, maxFee, _boundEarliest(delaySec), _boundLatest(delaySec, ttlSec), nonce, payloadHash, block.chainid, address(this))
+        );
+        bytes32 digest = _hashTypedDataV4(structHash);
+
+        if (!_isValidSig(approver, digest, signature)) revert VM90_ApprovalInvalid();
+
+        _enforceQueueCooldown(creator);
+        jobId = _queue(creator, target, token, maxFee, delaySec, ttlSec, payload);
+    }
+
+    function _queue(
+        address creator,
+        address target,
