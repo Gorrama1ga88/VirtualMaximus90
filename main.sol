@@ -268,3 +268,57 @@ contract VM90_Access {
         return _role[r][who];
     }
 
+    function grantRole(bytes32 r, address who) external onlyRole(ADMIN_ROLE) {
+        _role[r][who] = true;
+        emit VM90_RoleGranted(r, who, msg.sender);
+    }
+
+    function revokeRole(bytes32 r, address who) external onlyRole(ADMIN_ROLE) {
+        _role[r][who] = false;
+        emit VM90_RoleRevoked(r, who, msg.sender);
+    }
+}
+
+contract VM90_TargetRegistry is VM90_Access {
+    using VM90_Address for address;
+
+    // allowlisting executor targets and downstream call targets
+    mapping(address => bool) public isExecutorTarget;
+    mapping(address => bool) public isDownstreamTarget;
+
+    event VM90_ExecutorTargetSet(address indexed by, address indexed target, bool allowed);
+    event VM90_DownstreamTargetSet(address indexed by, address indexed target, bool allowed);
+
+    error VM90_NotContract(address a);
+
+    constructor(address admin) VM90_Access(admin) {}
+
+    function setExecutorTarget(address target, bool allowed) external onlyRole(ADMIN_ROLE) {
+        if (target == address(0) || !target.isContract()) revert VM90_NotContract(target);
+        isExecutorTarget[target] = allowed;
+        emit VM90_ExecutorTargetSet(msg.sender, target, allowed);
+    }
+
+    function setDownstreamTarget(address target, bool allowed) external onlyRole(ADMIN_ROLE) {
+        if (target == address(0) || !target.isContract()) revert VM90_NotContract(target);
+        isDownstreamTarget[target] = allowed;
+        emit VM90_DownstreamTargetSet(msg.sender, target, allowed);
+    }
+}
+
+// =============================================================
+// EIP-712 helper (compact)
+// =============================================================
+
+abstract contract VM90_EIP712 {
+    bytes32 private immutable _domainSeparator;
+    uint256 private immutable _domainChainId;
+    bytes32 private immutable _domainNameHash;
+    bytes32 private immutable _domainVersionHash;
+
+    bytes32 private constant _EIP712_DOMAIN_TYPEHASH = keccak256(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+    );
+
+    constructor(string memory name, string memory version) {
+        _domainChainId = block.chainid;
