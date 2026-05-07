@@ -106,3 +106,57 @@ library VM90_Address {
 
     function sendValue(address payable to, uint256 amount) internal {
         (bool ok, ) = to.call{value: amount}("");
+        if (!ok) revert("VM90_SEND_FAIL");
+    }
+}
+
+library VM90_SafeERC20 {
+    function safeTransfer(IERC20 tkn, address to, uint256 amount) internal {
+        (bool ok, bytes memory data) = address(tkn).call(abi.encodeWithSelector(IERC20.transfer.selector, to, amount));
+        if (!ok || (data.length != 0 && !abi.decode(data, (bool)))) revert("VM90_TFER");
+    }
+
+    function safeTransferFrom(IERC20 tkn, address from, address to, uint256 amount) internal {
+        (bool ok, bytes memory data) =
+            address(tkn).call(abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, amount));
+        if (!ok || (data.length != 0 && !abi.decode(data, (bool)))) revert("VM90_TFER_FROM");
+    }
+
+    function safeApprove(IERC20 tkn, address spender, uint256 amount) internal {
+        (bool ok, bytes memory data) = address(tkn).call(abi.encodeWithSelector(IERC20.approve.selector, spender, amount));
+        if (!ok || (data.length != 0 && !abi.decode(data, (bool)))) revert("VM90_APPR");
+    }
+}
+
+library VM90_ECDSA {
+    function toEthSignedMessageHash(bytes32 h) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", h));
+    }
+
+    function recover(bytes32 hash, bytes memory sig) internal pure returns (address) {
+        if (sig.length != 65) revert("VM90_SIG_LEN");
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := mload(add(sig, 0x20))
+            s := mload(add(sig, 0x40))
+            v := byte(0, mload(add(sig, 0x60)))
+        }
+        if (v < 27) v += 27;
+        if (v != 27 && v != 28) revert("VM90_SIG_V");
+        address signer = ecrecover(hash, v, r, s);
+        if (signer == address(0)) revert("VM90_SIG_Z");
+        return signer;
+    }
+}
+
+library VM90_Strings {
+    bytes16 private constant _HEX = "0123456789abcdef";
+
+    function toHex(uint256 x, uint256 lenBytes) internal pure returns (string memory) {
+        bytes memory s = new bytes(2 + lenBytes * 2);
+        s[0] = "0";
+        s[1] = "x";
+        for (uint256 i = 0; i < lenBytes * 2; i++) {
+            s[2 + lenBytes * 2 - 1 - i] = _HEX[x & 0xf];
