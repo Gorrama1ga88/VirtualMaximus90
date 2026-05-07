@@ -484,3 +484,57 @@ contract VirtualMaximus90 is VM90_TargetRegistry, VM90_Pausable, VM90_Reentrancy
             _pause();
             emit VM90_PausedBy(msg.sender);
         } else {
+            _unpause();
+            emit VM90_UnpausedBy(msg.sender);
+        }
+    }
+
+    function setConfig(uint32 maxJobsPerBatch_, uint32 minDelaySec_, uint32 maxDelaySec_, uint32 maxJobCalldata_)
+        external
+        onlyRole(ADMIN_ROLE)
+    {
+        if (maxJobsPerBatch_ == 0 || maxJobsPerBatch_ > 256) revert VM90_BadConfig();
+        if (minDelaySec_ > maxDelaySec_) revert VM90_BadConfig();
+        if (maxJobCalldata_ < 4 || maxJobCalldata_ > 24_576) revert VM90_BadConfig();
+
+        maxJobsPerBatch = maxJobsPerBatch_;
+        minDelaySec = minDelaySec_;
+        maxDelaySec = maxDelaySec_;
+        maxJobCalldata = maxJobCalldata_;
+
+        emit VM90_ConfigSet(msg.sender, maxJobsPerBatch_, minDelaySec_, maxDelaySec_, maxJobCalldata_);
+    }
+
+    function setExecutionBounds(
+        uint32 maxDownstreamCalldata_,
+        uint32 maxDownstreamFanout_,
+        uint32 maxGasStipend_,
+        uint32 queueCooldownSec_
+    ) external onlyRole(ADMIN_ROLE) {
+        if (maxDownstreamCalldata_ < 4 || maxDownstreamCalldata_ > 24_576) revert VM90_BadConfig();
+        if (maxDownstreamFanout_ == 0 || maxDownstreamFanout_ > 16) revert VM90_BadConfig();
+        if (maxGasStipend_ < 75_000 || maxGasStipend_ > 10_000_000) revert VM90_BadConfig();
+        maxDownstreamCalldata = maxDownstreamCalldata_;
+        maxDownstreamFanout = maxDownstreamFanout_;
+        maxGasStipend = maxGasStipend_;
+        queueCooldownSec = queueCooldownSec_;
+        emit VM90_QueueCooldownSet(msg.sender, queueCooldownSec_);
+    }
+
+    function setFee(address recipient, uint16 feeBps_) external onlyRole(ADMIN_ROLE) {
+        if (recipient == address(0)) revert VM90_BadRecipient();
+        if (feeBps_ > 2_500) revert VM90_BadFeeBps(feeBps_);
+        feeRecipient = recipient;
+        feeBps = feeBps_;
+        emit VM90_FeeSet(msg.sender, recipient, feeBps_);
+    }
+
+    function setTokenEnabled(address token, bool enabled) external onlyRole(ADMIN_ROLE) {
+        if (token == address(0)) revert VM90_TokenZero();
+        tokenEnabled[token] = enabled;
+        emit VM90_TokenEnabled(msg.sender, token, enabled);
+    }
+
+    // ---- job view helpers ----
+    function job(bytes32 jobId) external view returns (Job memory j) {
+        j = _jobs[jobId];
