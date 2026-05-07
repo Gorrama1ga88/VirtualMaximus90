@@ -376,3 +376,57 @@ contract VirtualMaximus90 is VM90_TargetRegistry, VM90_Pausable, VM90_Reentrancy
     // ---- accounting ----
     mapping(address => uint256) public accruedFees; // token => amount
     mapping(address => bool) public tokenEnabled;
+
+    // ---- job storage ----
+    enum JobState {
+        None,
+        Queued,
+        Executed,
+        Canceled
+    }
+
+    struct Job {
+        address creator;
+        address target;
+        address token;
+        uint96 maxFee; // in token units
+        uint64 earliest; // timestamp
+        uint64 latest; // timestamp
+        uint32 nonce;
+        uint32 gasLimit; // advisory for offchain; optional stipend enforcement in module
+        JobState state;
+        bytes32 payloadHash;
+    }
+
+    // jobId => Job
+    mapping(bytes32 => Job) private _jobs;
+    // creator => nonce
+    mapping(address => uint32) public creatorNonce;
+    // replay protection for approvals
+    mapping(address => mapping(uint256 => uint256)) private _approvalBitmap;
+
+    // creator => last queue timestamp (soft rate limiting)
+    mapping(address => uint64) public lastQueuedAt;
+    uint32 public queueCooldownSec;
+
+    // EIP-712 typed jobs
+    bytes32 private constant _JOB_TYPEHASH = keccak256(
+        "JobApproval(address creator,address target,address token,uint96 maxFee,uint64 earliest,uint64 latest,uint32 nonce,bytes32 payloadHash,uint256 chainId,address coordinator)"
+    );
+
+    // ---- events ----
+    event VM90_ConfigSet(address indexed by, uint32 maxJobsPerBatch, uint32 minDelaySec, uint32 maxDelaySec, uint32 maxJobCalldata);
+    event VM90_FeeSet(address indexed by, address indexed recipient, uint16 feeBps);
+    event VM90_PausedBy(address indexed by);
+    event VM90_UnpausedBy(address indexed by);
+
+    event VM90_JobQueued(bytes32 indexed jobId, address indexed creator, address indexed target, address token, uint96 maxFee, uint64 earliest, uint64 latest, bytes32 payloadHash);
+    event VM90_JobCanceled(bytes32 indexed jobId, address indexed by);
+    event VM90_JobExecuted(bytes32 indexed jobId, address indexed executor, address indexed target, address token, uint256 feePaid, bytes32 resultHash);
+
+    event VM90_FeesPulled(address indexed token, address indexed to, uint256 amount);
+    event VM90_ApprovalUsed(address indexed approver, uint256 indexed wordIndex, uint256 mask);
+    event VM90_TokenEnabled(address indexed by, address indexed token, bool enabled);
+    event VM90_QueueCooldownSet(address indexed by, uint32 cooldownSec);
+
+    // ---- errors ----
