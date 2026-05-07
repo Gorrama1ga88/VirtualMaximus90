@@ -160,3 +160,57 @@ library VM90_Strings {
         s[1] = "x";
         for (uint256 i = 0; i < lenBytes * 2; i++) {
             s[2 + lenBytes * 2 - 1 - i] = _HEX[x & 0xf];
+            x >>= 4;
+        }
+        return string(s);
+    }
+}
+
+library VM90_Bitmap {
+    function get(mapping(uint256 => uint256) storage self, uint256 idx) internal view returns (bool) {
+        uint256 word = idx >> 8;
+        uint256 bit = idx & 0xff;
+        uint256 mask = 1 << bit;
+        return (self[word] & mask) != 0;
+    }
+
+    function set(mapping(uint256 => uint256) storage self, uint256 idx) internal returns (uint256 word, uint256 mask) {
+        word = idx >> 8;
+        uint256 bit = idx & 0xff;
+        mask = 1 << bit;
+        uint256 cur = self[word];
+        if ((cur & mask) != 0) revert("VM90_BITMAP_USED");
+        self[word] = cur | mask;
+    }
+}
+
+library VM90_Call {
+    function callAndHash(address target, bytes memory data, uint256 gasStipend) internal returns (bytes32 resultHash) {
+        bool ok;
+        bytes memory out;
+        if (gasStipend == 0) {
+            (ok, out) = target.call(data);
+        } else {
+            (ok, out) = target.call{gas: gasStipend}(data);
+        }
+        if (!ok) {
+            // keep revert surface minimal; operators can use eth_call for details
+            revert("VM90_CALL_FAIL");
+        }
+        return keccak256(out);
+    }
+}
+
+// =============================================================
+// Guards & access (simple, mainstream)
+// =============================================================
+
+abstract contract VM90_ReentrancyGuard {
+    uint256 private _locked;
+
+    modifier nonReentrant() {
+        if (_locked != 0) revert("VM90_REENTRANT");
+        _locked = 1;
+        _;
+        _locked = 0;
+    }
