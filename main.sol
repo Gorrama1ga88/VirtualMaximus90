@@ -592,3 +592,57 @@ contract VirtualMaximus90 is VM90_TargetRegistry, VM90_Pausable, VM90_Reentrancy
     function _queue(
         address creator,
         address target,
+        address token,
+        uint96 maxFee,
+        uint64 delaySec,
+        uint64 ttlSec,
+        bytes calldata payload
+    ) internal returns (bytes32 jobId) {
+        if (target == address(0) || !target.isContract()) revert VM90_TargetNotContract(target);
+        if (token == address(0)) revert VM90_TokenZero();
+        if (!tokenEnabled[token]) revert VM90_TokenDisabled(token);
+        if (payload.length > maxJobCalldata) revert VM90_PayloadTooLarge(payload.length, maxJobCalldata);
+
+        uint64 earliest = _boundEarliest(delaySec);
+        uint64 latest = _boundLatest(delaySec, ttlSec);
+        if (earliest >= latest) revert VM90_TimeBounds(earliest, latest);
+
+        uint32 nonce = creatorNonce[creator];
+        creatorNonce[creator] = nonce + 1;
+
+        bytes32 payloadHash = keccak256(payload);
+        jobId = keccak256(abi.encodePacked(address(this), creator, nonce, target, token, maxFee, earliest, latest, payloadHash));
+        if (_jobs[jobId].state != JobState.None) revert("VM90_COLLIDE");
+
+        _jobs[jobId] = Job({
+            creator: creator,
+            target: target,
+            token: token,
+            maxFee: maxFee,
+            earliest: earliest,
+            latest: latest,
+            nonce: nonce,
+            gasLimit: 0,
+            state: JobState.Queued,
+            payloadHash: payloadHash
+        });
+
+        emit VM90_JobQueued(jobId, creator, target, token, maxFee, earliest, latest, payloadHash);
+    }
+
+    function _enforceQueueCooldown(address creator) internal {
+        uint64 last = lastQueuedAt[creator];
+        if (last != 0) {
+            uint64 nextAt = last + uint64(queueCooldownSec);
+            if (uint64(block.timestamp) < nextAt) revert VM90_QueueCooldown(nextAt);
+        }
+        lastQueuedAt[creator] = uint64(block.timestamp);
+    }
+
+    function _boundEarliest(uint64 delaySec) internal view returns (uint64) {
+        uint32 d = uint32(delaySec);
+        uint32 bounded = uint32(VM90_Math.clamp(d, minDelaySec, maxDelaySec));
+        return uint64(block.timestamp) + bounded;
+    }
+
+    function _boundLatest(uint64 delaySec, uint64 ttlSec) internal view returns (uint64) {
