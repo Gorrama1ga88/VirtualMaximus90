@@ -52,3 +52,57 @@ interface IERC1271 {
 
 interface IExecutorTarget {
     function clawExecute(bytes calldata data) external returns (bytes memory);
+}
+
+// =============================================================
+// Libraries (safe, mainstream patterns)
+// =============================================================
+
+library VM90_Bytes {
+    function slice(bytes calldata d, uint256 start, uint256 len) internal pure returns (bytes memory out) {
+        if (start + len > d.length) revert("VM90_BYTES_SLICE");
+        out = new bytes(len);
+        for (uint256 i = 0; i < len; i++) {
+            out[i] = d[start + i];
+        }
+    }
+
+    function toBytes32(bytes calldata d, uint256 start) internal pure returns (bytes32 x) {
+        if (start + 32 > d.length) revert("VM90_BYTES_B32");
+        assembly {
+            x := calldataload(add(d.offset, start))
+        }
+    }
+}
+
+library VM90_Math {
+    function min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
+    }
+
+    function max(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a > b ? a : b;
+    }
+
+    function clamp(uint256 x, uint256 lo, uint256 hi) internal pure returns (uint256) {
+        if (x < lo) return lo;
+        if (x > hi) return hi;
+        return x;
+    }
+
+    function mulDivDown(uint256 x, uint256 y, uint256 d) internal pure returns (uint256) {
+        return (x * y) / d;
+    }
+
+    function mulDivUp(uint256 x, uint256 y, uint256 d) internal pure returns (uint256) {
+        return (x * y + (d - 1)) / d;
+    }
+}
+
+library VM90_Address {
+    function isContract(address a) internal view returns (bool) {
+        return a.code.length > 0;
+    }
+
+    function sendValue(address payable to, uint256 amount) internal {
+        (bool ok, ) = to.call{value: amount}("");
