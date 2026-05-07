@@ -808,3 +808,52 @@ contract VM90_ClawRouter is IExecutorTarget, VM90_ReentrancyGuard {
     struct Hop {
         address to;
         uint32 gasStipend;
+        bytes data;
+    }
+
+    VirtualMaximus90 public immutable COORDINATOR;
+
+    error VM90R_NotCoordinator();
+    error VM90R_BadHop(uint256 idx);
+    error VM90R_NotAllowed(address target);
+    error VM90R_DataTooBig(uint256 size, uint256 maxSize);
+    error VM90R_TooMany(uint256 count, uint256 maxCount);
+
+    event VM90R_Chain(address indexed by, bytes32 indexed jobId, bytes32 chainHash, uint256 hopCount);
+
+    constructor(VirtualMaximus90 coordinator) {
+        COORDINATOR = coordinator;
+    }
+
+    modifier onlyCoordinator() {
+        if (msg.sender != address(COORDINATOR)) revert VM90R_NotCoordinator();
+        _;
+    }
+
+    // payload format:
+    // abi.encode(jobId, Hop[])
+    function clawExecute(bytes calldata payload) external onlyCoordinator nonReentrant returns (bytes memory) {
+        (bytes32 jobId, Hop[] memory hops) = abi.decode(payload, (bytes32, Hop[]));
+        uint256 maxFanout = COORDINATOR.maxDownstreamFanout();
+        if (hops.length == 0 || hops.length > maxFanout) revert VM90R_TooMany(hops.length, maxFanout);
+
+        bytes32 acc = keccak256(abi.encodePacked(jobId, block.chainid, address(this)));
+        uint256 maxCalldata = COORDINATOR.maxDownstreamCalldata();
+        uint256 maxGas = COORDINATOR.maxGasStipend();
+
+        for (uint256 i = 0; i < hops.length; i++) {
+            Hop memory h = hops[i];
+            if (h.to == address(0) || !h.to.isContract()) revert VM90R_BadHop(i);
+            if (!COORDINATOR.isDownstreamTarget(h.to)) revert VM90R_NotAllowed(h.to);
+            if (h.data.length > maxCalldata) revert VM90R_DataTooBig(h.data.length, maxCalldata);
+
+            uint256 g = uint256(h.gasStipend);
+            if (g > maxGas) g = maxGas;
+            bytes32 rh = h.to.callAndHash(h.data, g);
+            acc = keccak256(abi.encodePacked(acc, h.to, rh, h.gasStipend));
+        }
+
+        emit VM90R_Chain(tx.origin, jobId, acc, hops.length);
+        return abi.encode(acc);
+    }
+}
