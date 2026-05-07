@@ -646,3 +646,57 @@ contract VirtualMaximus90 is VM90_TargetRegistry, VM90_Pausable, VM90_Reentrancy
     }
 
     function _boundLatest(uint64 delaySec, uint64 ttlSec) internal view returns (uint64) {
+        uint32 boundedDelay = uint32(VM90_Math.clamp(uint32(delaySec), minDelaySec, maxDelaySec));
+        uint32 boundedTtl = uint32(VM90_Math.clamp(uint32(ttlSec), 60, 60 days));
+        return uint64(block.timestamp) + boundedDelay + boundedTtl;
+    }
+
+    // ---- cancellation ----
+    function cancel(bytes32 jobId) external whenNotPaused {
+        Job storage j = _jobs[jobId];
+        if (j.state == JobState.None) revert VM90_JobMissing(jobId);
+        if (j.state != JobState.Queued) revert VM90_JobState(jobId, uint8(j.state));
+
+        // creator can cancel; admin can cancel; guardian can cancel when paused
+        if (msg.sender != j.creator && !_role[ADMIN_ROLE][msg.sender] && !_role[GUARDIAN_ROLE][msg.sender]) {
+            revert VM90_MissingRole(ADMIN_ROLE, msg.sender);
+        }
+        j.state = JobState.Canceled;
+        emit VM90_JobCanceled(jobId, msg.sender);
+    }
+
+    // ---- execution ----
+    function execute(bytes32 jobId, bytes calldata payload, uint96 feeAsked) external whenNotPaused nonReentrant returns (bytes memory result) {
+        Job storage j = _jobs[jobId];
+        if (j.state == JobState.None) revert VM90_JobMissing(jobId);
+        if (j.state != JobState.Queued) revert VM90_JobState(jobId, uint8(j.state));
+        if (payload.length > maxJobCalldata) revert VM90_PayloadTooLarge(payload.length, maxJobCalldata);
+        if (keccak256(payload) != j.payloadHash) revert("VM90_HASH");
+
+        uint64 nowTs = uint64(block.timestamp);
+        if (nowTs < j.earliest || nowTs > j.latest) revert VM90_WindowMiss(nowTs, j.earliest, j.latest);
+
+        if (feeAsked > j.maxFee) revert VM90_FeeTooHigh(feeAsked, j.maxFee);
+
+        // mark executed first (checks-effects-interactions)
+        j.state = JobState.Executed;
+
+        // pull fee from creator into this contract (requires allowance)
+        if (feeAsked != 0) {
+            IERC20(j.token).safeTransferFrom(j.creator, address(this), uint256(feeAsked));
+            uint256 protocolCut = VM90_Math.mulDivDown(uint256(feeAsked), feeBps, 10_000);
+            accruedFees[j.token] += protocolCut;
+
+            // executor receives remaining
+            uint256 payout = uint256(feeAsked) - protocolCut;
+            if (payout != 0) {
+                IERC20(j.token).safeTransfer(msg.sender, payout);
+            }
+        }
+
+        // call target with payload; it must implement clawExecute; prevents arbitrary selector confusion
+        result = IExecutorTarget(j.target).clawExecute(payload);
+        bytes32 rh = keccak256(result);
+
+        emit VM90_JobExecuted(jobId, msg.sender, j.target, j.token, uint256(feeAsked), rh);
+    }
