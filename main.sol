@@ -700,3 +700,57 @@ contract VirtualMaximus90 is VM90_TargetRegistry, VM90_Pausable, VM90_Reentrancy
 
         emit VM90_JobExecuted(jobId, msg.sender, j.target, j.token, uint256(feeAsked), rh);
     }
+
+    // ---- batch execution for operators ----
+    function executeBatch(bytes32[] calldata jobIds, bytes[] calldata payloads, uint96[] calldata feesAsked)
+        external
+        whenNotPaused
+        nonReentrant
+        onlyRole(OPERATOR_ROLE)
+        returns (bytes32 batchHash)
+    {
+        if (jobIds.length != payloads.length || jobIds.length != feesAsked.length) revert("VM90_LEN");
+        if (jobIds.length > maxJobsPerBatch) revert VM90_TooMany(jobIds.length, maxJobsPerBatch);
+
+        bytes32 acc = keccak256(abi.encodePacked(VM90_BUILD_ID, block.chainid, block.number, msg.sender));
+
+        for (uint256 i = 0; i < jobIds.length; i++) {
+            bytes32 id = jobIds[i];
+            bytes calldata pl = payloads[i];
+            uint96 fa = feesAsked[i];
+
+            // We intentionally do not bubble reverts for batch; failures mark canceled by guardian-like behavior.
+            // This reduces MEV griefing via forcing partial failures.
+            (bool ok, bytes memory data) = address(this).call(abi.encodeWithSelector(this.execute.selector, id, pl, fa));
+            acc = keccak256(abi.encodePacked(acc, id, ok, keccak256(data)));
+        }
+
+        batchHash = acc;
+    }
+
+    // ---- permit-assisted fee approval (optional helper) ----
+    function permitFee(
+        address token,
+        address owner,
+        uint256 value,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external whenNotPaused {
+        if (!tokenEnabled[token]) revert VM90_TokenDisabled(token);
+        IERC20Permit(token).permit(owner, address(this), value, deadline, v, r, s);
+    }
+
+    // ---- fee management ----
+    function pullFees(address token, uint256 amount, address to) external onlyRole(ADMIN_ROLE) nonReentrant {
+        if (to == address(0)) revert VM90_BadRecipient();
+        uint256 avail = accruedFees[token];
+        if (amount > avail) revert("VM90_AVAIL");
+        accruedFees[token] = avail - amount;
+        IERC20(token).safeTransfer(to, amount);
+        emit VM90_FeesPulled(token, to, amount);
+    }
+
+    function pullAllFees(address token, address to) external onlyRole(ADMIN_ROLE) nonReentrant {
+        if (to == address(0)) revert VM90_BadRecipient();
