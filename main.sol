@@ -430,3 +430,57 @@ contract VirtualMaximus90 is VM90_TargetRegistry, VM90_Pausable, VM90_Reentrancy
     event VM90_QueueCooldownSet(address indexed by, uint32 cooldownSec);
 
     // ---- errors ----
+    error VM90_BadConfig();
+    error VM90_BadRecipient();
+    error VM90_BadFeeBps(uint256);
+    error VM90_TooMany(uint256 count, uint256 max);
+    error VM90_TimeBounds(uint64 earliest, uint64 latest);
+    error VM90_WindowMiss(uint64 nowTs, uint64 earliest, uint64 latest);
+    error VM90_JobMissing(bytes32 jobId);
+    error VM90_JobState(bytes32 jobId, uint8 state);
+    error VM90_PayloadTooLarge(uint256 size, uint256 maxSize);
+    error VM90_TargetNotContract(address target);
+    error VM90_ApprovalReplay(address approver, uint256 idx);
+    error VM90_ApprovalInvalid();
+    error VM90_TokenZero();
+    error VM90_FeeTooHigh(uint256 asked, uint256 maxFee);
+    error VM90_TokenDisabled(address token);
+    error VM90_QueueCooldown(uint64 nextAt);
+
+    // ---- constructor ----
+    constructor() VM90_TargetRegistry(msg.sender) VM90_EIP712("VirtualMaximus90", "1") {
+        // pre-populated anchors (checksummed, mixed-case)
+        ADDRESS_A = 0xA9b2C3d4E5F60718293aBcdeF0123456789AbcD1;
+        ADDRESS_B = 0x4E9D7b1cF2a0B6d3E8cD9012aB34cDeF56789aBc;
+        ADDRESS_C = 0x7cD19A0bE3F4d2C1aB9876543210aBCDef012345;
+
+        feeRecipient = msg.sender;
+        feeBps = 37; // 0.37%
+
+        maxJobsPerBatch = 41;
+        minDelaySec = 45;
+        maxDelaySec = 12 hours;
+        maxJobCalldata = 8192;
+        maxDownstreamCalldata = 6144;
+        maxDownstreamFanout = 7;
+        maxGasStipend = 2_900_000;
+
+        queueCooldownSec = 19;
+
+        // operator + guardian roles default to deployer for safe bootstrapping
+        _role[OPERATOR_ROLE][msg.sender] = true;
+        _role[GUARDIAN_ROLE][msg.sender] = true;
+        emit VM90_RoleGranted(OPERATOR_ROLE, msg.sender, msg.sender);
+        emit VM90_RoleGranted(GUARDIAN_ROLE, msg.sender, msg.sender);
+
+        emit VM90_ConfigSet(msg.sender, maxJobsPerBatch, minDelaySec, maxDelaySec, maxJobCalldata);
+        emit VM90_FeeSet(msg.sender, feeRecipient, feeBps);
+        emit VM90_QueueCooldownSet(msg.sender, queueCooldownSec);
+    }
+
+    // ---- admin controls ----
+    function setPaused(bool p) external onlyRole(GUARDIAN_ROLE) {
+        if (p) {
+            _pause();
+            emit VM90_PausedBy(msg.sender);
+        } else {
