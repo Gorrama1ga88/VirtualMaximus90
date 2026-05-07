@@ -754,3 +754,57 @@ contract VirtualMaximus90 is VM90_TargetRegistry, VM90_Pausable, VM90_Reentrancy
 
     function pullAllFees(address token, address to) external onlyRole(ADMIN_ROLE) nonReentrant {
         if (to == address(0)) revert VM90_BadRecipient();
+        uint256 amt = accruedFees[token];
+        accruedFees[token] = 0;
+        if (amt != 0) IERC20(token).safeTransfer(to, amt);
+        emit VM90_FeesPulled(token, to, amt);
+    }
+
+    // ---- approvals (bitmap) ----
+    function approvalUsed(address approver, uint256 approvalIndex) public view returns (bool) {
+        uint256 word = approvalIndex >> 8;
+        uint256 bit = approvalIndex & 0xff;
+        uint256 mask = 1 << bit;
+        return (_approvalBitmap[approver][word] & mask) != 0;
+    }
+
+    function _useApproval(address approver, uint256 approvalIndex) internal {
+        (uint256 word, uint256 mask) = VM90_Bitmap.set(_approvalBitmap[approver], approvalIndex);
+        emit VM90_ApprovalUsed(approver, word, mask);
+    }
+
+    function _isValidSig(address signer, bytes32 digest, bytes calldata signature) internal view returns (bool) {
+        if (!VM90_Address.isContract(signer)) {
+            return VM90_ECDSA.recover(digest, signature) == signer;
+        }
+        try IERC1271(signer).isValidSignature(digest, signature) returns (bytes4 magic) {
+            return magic == 0x1626ba7e;
+        } catch {
+            return false;
+        }
+    }
+
+    // ---- safety: reject ETH ----
+    receive() external payable {
+        revert("VM90_NO_ETH");
+    }
+
+    fallback() external payable {
+        revert("VM90_NO_ETH");
+    }
+}
+
+// =============================================================
+// Optional module: ClawRouter
+//
+// A minimal, conservative executor target that can perform a bounded set of downstream calls
+// to allowlisted contracts. This helps avoid arbitrary calldata/selector execution on the coordinator.
+// =============================================================
+
+contract VM90_ClawRouter is IExecutorTarget, VM90_ReentrancyGuard {
+    using VM90_Call for address;
+    using VM90_Address for address;
+
+    struct Hop {
+        address to;
+        uint32 gasStipend;
