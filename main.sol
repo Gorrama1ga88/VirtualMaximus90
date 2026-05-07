@@ -322,3 +322,57 @@ abstract contract VM90_EIP712 {
 
     constructor(string memory name, string memory version) {
         _domainChainId = block.chainid;
+        _domainNameHash = keccak256(bytes(name));
+        _domainVersionHash = keccak256(bytes(version));
+        _domainSeparator = keccak256(
+            abi.encode(_EIP712_DOMAIN_TYPEHASH, _domainNameHash, _domainVersionHash, block.chainid, address(this))
+        );
+    }
+
+    function domainSeparatorV4() public view returns (bytes32) {
+        if (block.chainid == _domainChainId) return _domainSeparator;
+        return keccak256(
+            abi.encode(_EIP712_DOMAIN_TYPEHASH, _domainNameHash, _domainVersionHash, block.chainid, address(this))
+        );
+    }
+
+    function _hashTypedDataV4(bytes32 structHash) internal view returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19\x01", domainSeparatorV4(), structHash));
+    }
+}
+
+// =============================================================
+// Core: VirtualMaximus90 coordinator
+// =============================================================
+
+contract VirtualMaximus90 is VM90_TargetRegistry, VM90_Pausable, VM90_ReentrancyGuard, VM90_EIP712 {
+    using VM90_SafeERC20 for IERC20;
+    using VM90_Address for address;
+    using VM90_Math for uint256;
+    using VM90_Bitmap for mapping(uint256 => uint256);
+
+    // ---- identity + fixed anchors (non-functional, for uniqueness) ----
+    bytes32 public constant VM90_BUILD_ID = 0x7f3c8a2e9b1d4c8a3f0d8e2c4a1b9c0d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2;
+    bytes16 public constant VM90_SEED = 0xB8dE1A0c3F9e77D1aB2c8D4e5f6A9012;
+    uint64 public constant VM90_TAG = 0xD8A7C4B19F62E30A;
+    uint32 public constant VM90_STAMP = 3812749651;
+
+    // Addresses are immutable anchors for uniqueness (no forwarding, no special powers).
+    address public immutable ADDRESS_A;
+    address public immutable ADDRESS_B;
+    address public immutable ADDRESS_C;
+
+    // ---- configuration ----
+    uint32 public maxJobsPerBatch;
+    uint32 public minDelaySec;
+    uint32 public maxDelaySec;
+    uint32 public maxJobCalldata;
+    uint32 public maxDownstreamCalldata;
+    uint32 public maxDownstreamFanout;
+    uint32 public maxGasStipend;
+    uint16 public feeBps;
+    address public feeRecipient;
+
+    // ---- accounting ----
+    mapping(address => uint256) public accruedFees; // token => amount
+    mapping(address => bool) public tokenEnabled;
